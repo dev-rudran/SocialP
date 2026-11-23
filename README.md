@@ -51,3 +51,9 @@ src/
 ## License & credits
 
 Font: JetBrains Mono Nerd Font (SIL Open Font License, see `src/assets/fonts/OFL.txt`).
+
+## Relay (TURN)
+
+Some networks (mobile data, hotspots, strict NATs) block direct WebRTC connections. The app then falls back to a TURN relay *for that connection only*. The relay forwards end-to-end encrypted traffic, so it can't read content, but it does see IP addresses and traffic volume. Users can choose *only when needed* (default), *always* (hides your IP from friends), or *never* in Settings → Network, which also has a connection diagnostics panel.
+
+Configure the built-in relay with the `TURN_ENDPOINT` repository secret (Settings → Secrets and variables → Actions). It must be a URL returning ICE servers, e.g. Metered's `https://<app>.metered.live/api/v1/turn/credentials?apiKey=<key>`, or anything returning `{ "iceServers": [...] }`. For local development put `VITE_TURN_ENDPOINT=...` in `.env.local`.

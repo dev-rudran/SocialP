@@ -37,9 +37,11 @@ export interface Settings {
   theme: 'system' | 'light' | 'dark'
   /** cap for friends' cached full-size media, in MB */
   cacheLimitMB: number
+  /** auto: TURN relay only when a direct connection fails · always: hide IP from friends · never */
+  relayPolicy: 'auto' | 'always' | 'never'
 }
 
-export const defaultSettings: Settings = { relayUrls: [], turnUrl: '', turnUser: '', turnPass: '', theme: 'system', cacheLimitMB: 1024 }
+export const defaultSettings: Settings = { relayUrls: [], turnUrl: '', turnUser: '', turnPass: '', theme: 'system', cacheLimitMB: 1024, relayPolicy: 'auto' }
 
 export class SocialDB extends Dexie {
   meta!: EntityTable<MetaRow, 'key'>

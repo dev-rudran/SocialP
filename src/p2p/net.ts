@@ -1,4 +1,4 @@
-import { joinRoom, type JoinRoomConfig, type JsonValue, type Room } from 'trystero'
+import { getRelaySockets, joinRoom, type JoinRoomConfig, type JsonValue, type Room, type TurnServerConfig } from 'trystero'
 import { on } from '../core/bus'
 import { db, getSettings, putBlob, putRecord, touchBlob } from '../core/db'
 import { pubMatchesId, signText, verifyText, type Identity } from '../core/identity'
@@ -7,6 +7,7 @@ import { publishFriendList } from '../core/actions'
 import { sha256Hex, toHex, utf8 } from '../lib/encoding'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { peers } from '../state/peers'
+import { relayServers } from './ice'
 import { buildManifest, canServeBlob, missingFrom, selectRecords, shouldAccept, Visibility, type ManifestEntry } from './policy'
 
 const APP_ID = 'socialp.p2p/v1'
@@ -34,6 +35,10 @@ interface Ctx {
   /** the friend this room is about (outbox / pair) */
   target?: string
   room: Room
+  roomId: string
+  password: string
+  /** joined with TURN servers */
+  relay: boolean
   authed: Map<string, string> // peerId -> verified user id
   auth: ReturnType<typeof makeActions>['auth']
   friendReq: ReturnType<typeof makeActions>['friendReq']
@@ -67,6 +72,10 @@ class Network {
   private prefetchQueue: { ref: MediaRef; owner: string }[] = []
   private prefetching = false
   private config: JoinRoomConfig = { appId: APP_ID }
+  private policy: 'auto' | 'always' | 'never' = 'auto'
+  private turn: TurnServerConfig[] = []
+  /** rooms where a direct connection failed, so they now run through the relay */
+  private relayKeys = new Set<string>()
   private unsubs: (() => void)[] = []
   private reconciling: Promise<void> | null = null
   private log: string[] = []
@@ -111,13 +120,86 @@ class Network {
     const s = await getSettings()
     const cfg: JoinRoomConfig = { appId: APP_ID, identity: 'none', maxReceiveBytes: MAX_BLOB }
     if (s.relayUrls.length) cfg.relayConfig = { urls: s.relayUrls }
-    if (s.turnUrl) cfg.turnConfig = [{ urls: s.turnUrl, username: s.turnUser || undefined, credential: s.turnPass || undefined }]
     this.config = cfg
+    this.policy = s.relayPolicy
+    this.relayKeys.clear()
+    this.turn = []
+    if (this.policy === 'always') {
+      this.turn = await relayServers()
+      peers.setRelay(this.turn.length ? 'active' : 'unavailable')
+      if (!this.turn.length) this.trace('always-relay requested but no relay is available; connecting directly')
+    }
+  }
+
+  private roomConfig(relay: boolean, password: string): JoinRoomConfig {
+    if (!relay || !this.turn.length) return { ...this.config, password }
+    return {
+      ...this.config,
+      password,
+      turnConfig: this.turn,
+      rtcConfig: this.policy === 'always' ? { iceTransportPolicy: 'relay' } : undefined,
+    }
+  }
+
+  /** A direct connection in this room failed: rejoin it with TURN servers. */
+  private async upgradeToRelay(key: string) {
+    if (this.policy === 'never' || this.relayKeys.has(key)) return
+    this.relayKeys.add(key)
+    if (!this.turn.length) this.turn = await relayServers()
+    if (!this.turn.length) {
+      peers.setRelay('unavailable')
+      this.trace(`${key}: direct connection failed and no relay is available`)
+      return
+    }
+    peers.setRelay('active')
+    const ctx = this.rooms.get(key)
+    if (!ctx || ctx.relay) return
+    this.trace(`${key}: direct connection failed, retrying through relay`)
+    this.rooms.delete(key)
+    this.dropLinks(ctx)
+    await ctx.room.leave().catch(() => {})
+    if (this.me && !this.rooms.has(key)) this.join(key, ctx.kind, ctx.roomId, ctx.password, ctx.target)
+  }
+
+  private dropLinks(ctx: Ctx) {
+    for (const [who, link] of this.live) {
+      if (link.ctx !== ctx) continue
+      this.live.delete(who)
+      peers.setOnline(who, false)
+    }
+  }
+
+  /** Inspect the selected ICE candidate pair to tell whether a link is relayed. */
+  private async detectLink(ctx: Ctx, peerId: string, who: string) {
+    try {
+      const pc = ctx.room.getPeers()[peerId]?.connection
+      if (!pc) return
+      const stats = await pc.getStats()
+      let relayed = false
+      stats.forEach((r) => {
+        if (r.type !== 'candidate-pair' || !(r.nominated || r.selected) || r.state !== 'succeeded') return
+        const local = stats.get(r.localCandidateId)
+        const remote = stats.get(r.remoteCandidateId)
+        if (local?.candidateType === 'relay' || remote?.candidateType === 'relay') relayed = true
+      })
+      peers.setLink(who, relayed ? 'relay' : 'direct')
+      this.trace(`link ${who.slice(0, 6)}: ${relayed ? 'relayed' : 'direct'}`)
+    } catch {
+      // stats are best-effort
+    }
   }
 
   debugState() {
     return {
-      rooms: [...this.rooms.values()].map((c) => ({ key: c.key, peers: Object.keys(c.room.getPeers()).length, authed: [...c.authed.values()] })),
+      policy: this.policy,
+      relayServers: this.turn.length,
+      signaling: Object.entries(getRelaySockets()).map(([url, ws]) => ({ url, open: ws.readyState === WebSocket.OPEN })),
+      rooms: [...this.rooms.values()].map((c) => ({
+        key: c.key.replace(/:(\w{6})\w+/, ':$1…'),
+        relay: c.relay,
+        peers: Object.keys(c.room.getPeers()).length,
+        authed: [...c.authed.values()].map((id) => id.slice(0, 6)),
+      })),
       live: [...this.live.keys()],
       wanted: this.wanted.size,
       log: this.log,
@@ -160,13 +242,16 @@ class Network {
   }
 
   private join(key: string, kind: Kind, roomId: string, password: string, target?: string) {
-    const room = joinRoom({ ...this.config, password }, roomId)
-    const ctx: Ctx = { key, kind, target, room, authed: new Map(), ...makeActions(room) }
+    const relay = this.turn.length > 0 && (this.policy === 'always' || this.relayKeys.has(key))
+    const room = joinRoom(this.roomConfig(relay, password), roomId)
+    const ctx: Ctx = { key, kind, target, room, roomId, password, relay, authed: new Map(), ...makeActions(room) }
     this.rooms.set(key, ctx)
+    this.trace(`join ${key.slice(0, 13)}${relay ? ' (relay)' : ''}`)
 
     room.onError((e) => {
+      this.trace(`${key.slice(0, 13)} error ${e.code}${'turnConfigured' in e ? ` turn=${e.turnConfigured}` : ''}`)
       if (e.code === 'relay-failed') peers.setStatus('online', 'Some signaling relays are unreachable')
-      else console.debug('[p2p]', key, e.code, e.message)
+      if (e.code === 'peer-connect-failed' && !ctx.relay) void this.upgradeToRelay(key)
     })
 
     ctx.auth.onRequest(({ nonce }) => {
@@ -271,6 +356,7 @@ class Network {
     if (!f.pub) await db.friends.update(who.by, { pub: who.pub })
     this.live.set(who.by, { ctx, peerId })
     this.trace(`live ${who.by.slice(0, 6)}`)
+    void this.detectLink(ctx, peerId, who.by)
     peers.setOnline(who.by, true)
     await db.friends.update(who.by, { lastSeen: Date.now() })
     await this.pull(ctx, peerId)
@@ -400,4 +486,7 @@ function mediaOf(rec: Stored): MediaRef[] {
 
 export const net = new Network()
 
-if (import.meta.env.DEV) Object.assign(globalThis, { __socialp: { net, debug: () => net.debugState() } })
+if (import.meta.env.DEV)
+  Object.assign(globalThis, {
+    __socialp: { net, debug: () => net.debugState(), simulateDirectFailure: (key: string) => (net as unknown as { upgradeToRelay(k: string): Promise<void> }).upgradeToRelay(key) },
+  })

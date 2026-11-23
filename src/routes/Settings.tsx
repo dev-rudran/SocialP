@@ -1,15 +1,18 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { ChevronRight, Download, HardDrive, Moon, Network, QrCode, ShieldCheck, Trash2, User } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { exportProfile } from '../core/archive'
 import { emit } from '../core/bus'
 import { cacheStats, db, evictCache, FRIEND_MEDIA_TTL, getSettings, updateSettings, type Settings as S } from '../core/db'
-import { useMe } from '../state/hooks'
 import { usePeers } from '../state/peers'
 import { applyTheme, session, useSession } from '../state/session'
 import { Button, Input, copy } from '../ui/common'
 import { ShareIdModal } from './Find'
+import { net } from '../p2p/net'
+import { hasBuiltInRelay } from '../p2p/ice'
+import { displayName, useFriends, useMe } from '../state/hooks'
+import { Avatar } from '../ui/Avatar'
 
 function Row({ icon, title, sub, to, onClick }: { icon: ReactNode; title: string; sub?: string; to?: string; onClick?: () => void }) {
   const body = (
@@ -144,6 +147,7 @@ function NetworkForm({ initial }: { initial: S }) {
   const [turnUrl, setTurnUrl] = useState(initial.turnUrl)
   const [turnUser, setTurnUser] = useState(initial.turnUser)
   const [turnPass, setTurnPass] = useState(initial.turnPass)
+  const [policy, setPolicy] = useState(initial.relayPolicy)
   const [saved, setSaved] = useState(false)
   const online = usePeers((s) => s.online.size)
   const lastError = usePeers((s) => s.lastError)
@@ -154,7 +158,7 @@ function NetworkForm({ initial }: { initial: S }) {
       .split(/\s+/)
       .map((s) => s.trim())
       .filter((s) => /^wss?:\/\//.test(s))
-    await updateSettings({ relayUrls, turnUrl: turnUrl.trim(), turnUser: turnUser.trim(), turnPass })
+    await updateSettings({ relayUrls, turnUrl: turnUrl.trim(), turnUser: turnUser.trim(), turnPass, relayPolicy: policy })
     emit('network', undefined)
     setSaved(true)
     setTimeout(() => nav('/settings'), 600)
@@ -169,7 +173,31 @@ function NetworkForm({ initial }: { initial: S }) {
           {lastError && <span className="block text-amber-500">{lastError}</span>}
         </p>
         <div>
-          <label className="mb-1 block font-semibold">Custom relays</label>
+          <label className="mb-2 block font-semibold">Relay (TURN)</label>
+          <div className="space-y-2">
+            {(
+              [
+                ['auto', 'Only when needed', 'Connect directly; fall back to the relay only if your networks block it (hotspots, mobile data). Recommended.'],
+                ['always', 'Always relay', 'Friends never see your IP address; the relay operator does. Slower.'],
+                ['never', 'Never', 'Direct connections only. Some friends may be unreachable.'],
+              ] as const
+            ).map(([value, title, sub]) => (
+              <label key={value} className={`flex cursor-pointer gap-3 rounded-lg border p-3 ${policy === value ? 'border-accent' : 'border-line'}`}>
+                <input type="radio" name="relay" checked={policy === value} onChange={() => setPolicy(value)} className="mt-1" />
+                <span>
+                  <span className="block font-semibold">{title}</span>
+                  <span className="block text-xs text-muted">{sub}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-muted">
+            The relay forwards end-to-end encrypted traffic and can't read your posts. It does see IP addresses and traffic volume.
+            {!hasBuiltInRelay() && !turnUrl && ' No relay is configured in this build; add your own TURN server below.'}
+          </p>
+        </div>
+        <div>
+          <label className="mb-1 block font-semibold">Custom signaling relays</label>
           <textarea
             value={relays}
             onChange={(e) => setRelays(e.target.value)}
@@ -180,19 +208,86 @@ function NetworkForm({ initial }: { initial: S }) {
           <p className="mt-1 text-xs text-muted">One per line. Run your own Nostr relay for full control. Friends must share at least one relay with you.</p>
         </div>
         <div className="space-y-2">
-          <label className="block font-semibold">TURN server (optional)</label>
+          <label className="block font-semibold">Own TURN server (optional)</label>
           <Input placeholder="turn:turn.example.com:3478" value={turnUrl} onChange={(e) => setTurnUrl(e.target.value)} />
           <div className="flex gap-2">
             <Input placeholder="Username" value={turnUser} onChange={(e) => setTurnUser(e.target.value)} />
             <Input placeholder="Password" type="password" value={turnPass} onChange={(e) => setTurnPass(e.target.value)} />
           </div>
-          <p className="text-xs text-muted">Needed when strict NATs block direct connections. A TURN relay also hides your IP address from friends.</p>
+          <p className="text-xs text-muted">Replaces the built-in relay. Leave empty to use the default.</p>
         </div>
         <Button className="w-full" onClick={save}>
           {saved ? 'Saved — reconnecting…' : 'Save & reconnect'}
         </Button>
+        <Diagnostics />
       </div>
     </Page>
+  )
+}
+
+function Diagnostics() {
+  const [state, setState] = useState(() => net.debugState())
+  const [copied, setCopied] = useState(false)
+  const friends = useFriends()
+  const online = usePeers((s) => s.online)
+  const links = usePeers((s) => s.links)
+  const relay = usePeers((s) => s.relay)
+  useEffect(() => {
+    const t = setInterval(() => setState(net.debugState()), 2000)
+    return () => clearInterval(t)
+  }, [])
+  const openRelays = state.signaling.filter((r) => r.open).length
+  const report = JSON.stringify({ at: new Date().toISOString(), ua: navigator.userAgent, ...state }, null, 1)
+  return (
+    <section className="space-y-3 border-t border-line pt-5">
+      <h2 className="font-semibold">Connection diagnostics</h2>
+      <ul className="space-y-1 text-xs">
+        <li>
+          Signaling relays: <b className={openRelays ? 'text-emerald-500' : 'text-danger'}>{openRelays}/{state.signaling.length} connected</b>
+        </li>
+        <li>
+          TURN relay:{' '}
+          <b className={relay === 'unavailable' ? 'text-danger' : ''}>
+            {relay === 'active' ? 'in use' : relay === 'unavailable' ? 'needed but unavailable' : 'not needed so far'}
+          </b>
+        </li>
+      </ul>
+      <div className="space-y-2">
+        {friends
+          .filter((f) => f.status !== 'incoming')
+          .map((f) => (
+            <FriendLink key={f.id} id={f.id} status={f.status} online={online.has(f.id)} link={links.get(f.id)} />
+          ))}
+      </div>
+      <details className="text-xs">
+        <summary className="cursor-pointer text-muted">Technical log</summary>
+        <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-elev p-2 whitespace-pre-wrap">{state.log.slice(-60).join('\n') || 'empty'}</pre>
+      </details>
+      <Button
+        variant="secondary"
+        className="w-full"
+        onClick={() => {
+          void copy(report)
+          setCopied(true)
+          setTimeout(() => setCopied(false), 1500)
+        }}
+      >
+        {copied ? 'Copied' : 'Copy diagnostics report'}
+      </Button>
+      <p className="text-xs text-muted">The report contains shortened IDs and connection events, no posts or keys.</p>
+    </section>
+  )
+}
+
+function FriendLink({ id, status, online, link }: { id: string; status: string; online: boolean; link?: 'direct' | 'relay' }) {
+  const p = useLiveQuery(() => db.records.get(`profile:${id}`), [id]) as { username?: string } | undefined
+  const label = online ? (link === 'relay' ? 'connected via relay' : link === 'direct' ? 'connected directly' : 'connected') : status === 'outgoing' ? 'request pending' : 'offline'
+  return (
+    <div className="flex items-center gap-3 text-xs">
+      <Avatar id={id} size={28} />
+      <span className="flex-1 truncate">{displayName(p as never, id)}</span>
+      <span className={online ? 'text-emerald-500' : 'text-muted'}>{label}</span>
+    </div>
   )
 }
 
@@ -224,7 +319,8 @@ export function PrivacyPage() {
     ['Storage', `Posts, stories and media live in this browser's IndexedDB (${counts?.records ?? 0} records, ${counts?.blobs ?? 0} media files). Nothing is uploaded to a server.`],
     ['Sharing', `Content travels over WebRTC (DTLS-encrypted) only to friends you've accepted. Friends keep copies and can pass your posts to people on your friend list while you're offline. Never to anyone else.`],
     ['What friends see', `Accepted friends see your posts, stories, profile and friend list. People who know your ID can send you a request but see nothing until you accept.`],
-    ['Limits', `Removing a friend stops future sharing, but can't erase what they already received. Deleting a post asks friends' devices to delete it too. Stories expire after 24 hours. Direct connections reveal your IP address to friends unless you use a TURN relay.`],
+    ['Limits', `Removing a friend stops future sharing, but can't erase what they already received. Deleting a post asks friends' devices to delete it too. Stories expire after 24 hours. Direct connections reveal your IP address to friends.`],
+    ['Relay', `When two networks block direct connections (common on mobile data and hotspots), traffic goes through a TURN relay. It is end-to-end encrypted, so the relay can't read anything, but it sees both IP addresses and how much data flows. The relay is only contacted when a direct connection fails, or always if you choose "Always relay" to hide your IP from friends.`],
     ['Backups', `If this browser's data is cleared and you have no export, your profile is gone for good. Nobody can recover it. Friends may still hold your posts and will sync them back once you import your archive.`],
   ]
   return (

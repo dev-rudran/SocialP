@@ -12,6 +12,7 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      injectRegister: false, // registered in main.tsx so updates apply immediately
       includeAssets: ['favicon.svg'],
       manifest: {
         name: 'SocialP',

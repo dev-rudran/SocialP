@@ -29,9 +29,10 @@ jobs:
         env:
           # served from https://<user>.github.io/<repo>/ ; set to "/" once a custom domain is used
           BASE_PATH: /${{ github.event.repository.name }}/
-          # TURN credential URL (e.g. Metered). Kept as a secret so it is not committed; it is still visible
+          # TURN relay: a credential URL (TURN_ENDPOINT) or a static ICE server JSON array (TURN_ICE). Kept as a secret so it is not committed; it is still visible
           # to anyone inspecting the deployed site, which only exposes relay quota, never user data.
           VITE_TURN_ENDPOINT: ${{ secrets.TURN_ENDPOINT }}
+          VITE_TURN_ICE: ${{ secrets.TURN_ICE }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

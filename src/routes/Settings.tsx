@@ -232,6 +232,7 @@ function Diagnostics() {
   const online = usePeers((s) => s.online)
   const links = usePeers((s) => s.links)
   const relay = usePeers((s) => s.relay)
+  const nat = usePeers((s) => s.nat)
   useEffect(() => {
     const t = setInterval(() => setState(net.debugState()), 2000)
     return () => clearInterval(t)
@@ -244,6 +245,19 @@ function Diagnostics() {
       <ul className="space-y-1 text-xs">
         <li>
           Signaling relays: <b className={openRelays ? 'text-emerald-500' : 'text-danger'}>{openRelays}/{state.signaling.length} connected</b>
+        </li>
+        <li>
+          Your network:{' '}
+          <b className={nat?.type === 'symmetric' || nat?.type === 'blocked' ? 'text-amber-500' : ''}>
+            {nat?.type === 'cone'
+              ? 'direct connections possible'
+              : nat?.type === 'symmetric'
+                ? 'strict NAT (mobile data / hotspot): friends or relay needed'
+                : nat?.type === 'blocked'
+                  ? 'UDP blocked: relay needed'
+                  : 'checking…'}
+            {nat?.ipv6 ? ' · IPv6' : ''}
+          </b>
         </li>
         <li>
           TURN relay:{' '}
@@ -279,9 +293,21 @@ function Diagnostics() {
   )
 }
 
-function FriendLink({ id, status, online, link }: { id: string; status: string; online: boolean; link?: 'direct' | 'relay' }) {
+function FriendLink({ id, status, online, link }: { id: string; status: string; online: boolean; link?: string }) {
   const p = useLiveQuery(() => db.records.get(`profile:${id}`), [id]) as { username?: string } | undefined
-  const label = online ? (link === 'relay' ? 'connected via relay' : link === 'direct' ? 'connected directly' : 'connected') : status === 'outgoing' ? 'request pending' : 'offline'
+  const viaId = link?.startsWith('via:') ? link.slice(4) : undefined
+  const via = useLiveQuery(async () => (viaId ? db.records.get(`profile:${viaId}`) : undefined), [viaId]) as { username?: string } | undefined
+  const label = online
+    ? viaId
+      ? `connected through ${displayName(via as never, viaId)}`
+      : link === 'relay'
+        ? 'connected via relay'
+        : link === 'direct'
+          ? 'connected directly'
+          : 'connected'
+    : status === 'outgoing'
+      ? 'request pending'
+      : 'offline'
   return (
     <div className="flex items-center gap-3 text-xs">
       <Avatar id={id} size={28} />
@@ -320,6 +346,7 @@ export function PrivacyPage() {
     ['Sharing', `Content travels over WebRTC (DTLS-encrypted) only to friends you've accepted. Friends keep copies and can pass your posts to people on your friend list while you're offline. Never to anyone else.`],
     ['What friends see', `Accepted friends see your posts, stories, profile and friend list. People who know your ID can send you a request but see nothing until you accept.`],
     ['Limits', `Removing a friend stops future sharing, but can't erase what they already received. Deleting a post asks friends' devices to delete it too. Stories expire after 24 hours. Direct connections reveal your IP address to friends.`],
+    ['Friends relaying', `If you and a friend can't connect directly, a mutual friend who is connected to both of you can pass your traffic along. It is end-to-end encrypted between you and your friend, so the friend in the middle can't read or change anything. They only learn that the two of you are exchanging data. Friends only tell each other which of your mutual friends are online right now; nobody else learns it.`],
     ['Relay', `When two networks block direct connections (common on mobile data and hotspots), traffic goes through a TURN relay. It is end-to-end encrypted, so the relay can't read anything, but it sees both IP addresses and how much data flows. The relay is only contacted when a direct connection fails, or always if you choose "Always relay" to hide your IP from friends.`],
     ['Backups', `If this browser's data is cleared and you have no export, your profile is gone for good. Nobody can recover it. Friends may still hold your posts and will sync them back once you import your archive.`],
   ]

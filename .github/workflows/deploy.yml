@@ -33,6 +33,8 @@ jobs:
           # to anyone inspecting the deployed site, which only exposes relay quota, never user data.
           VITE_TURN_ENDPOINT: ${{ secrets.TURN_ENDPOINT }}
           VITE_TURN_ICE: ${{ secrets.TURN_ICE }}
+          # "1" when TURN_ICE points at our own relay: it's then offered on every connection (direct still preferred)
+          VITE_TURN_TRUSTED: ${{ secrets.TURN_TRUSTED }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

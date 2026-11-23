@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { NatInfo } from '../p2p/nat'
 
 interface PeersState {
   /** friend ids with a live authenticated connection */
@@ -7,10 +8,11 @@ interface PeersState {
   downloads: Map<string, number>
   status: 'offline' | 'connecting' | 'online'
   lastError?: string
-  /** how each online friend is connected */
-  links: Map<string, 'direct' | 'relay'>
+  /** how each online friend is connected: 'direct', 'relay' or 'via:<mutual friend id>' */
+  links: Map<string, string>
   /** relay state: idle (not needed yet), active, unavailable (needed but no relay configured / reachable) */
   relay: 'idle' | 'active' | 'unavailable'
+  nat?: NatInfo
 }
 
 export const usePeers = create<PeersState>(() => ({ online: new Set(), downloads: new Map(), status: 'offline', links: new Map(), relay: 'idle' }))
@@ -25,8 +27,11 @@ export const peers = {
       return { online, links }
     })
   },
-  setLink(id: string, kind: 'direct' | 'relay') {
+  setLink(id: string, kind: string) {
     usePeers.setState((s) => ({ links: new Map(s.links).set(id, kind) }))
+  },
+  setNat(nat: NatInfo) {
+    usePeers.setState({ nat })
   },
   setRelay(relay: PeersState['relay']) {
     usePeers.setState({ relay })

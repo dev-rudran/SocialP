@@ -22,6 +22,13 @@ let pending: Promise<TurnServerConfig[]> | null = null
 
 export const hasBuiltInRelay = () => !!ENDPOINT || STATIC.length > 0
 
+/**
+ * VITE_TURN_TRUSTED=1 marks the built-in relay as operated by the app owner. It's then offered on every
+ * connection (browsers still prefer a direct path), instead of only after a direct attempt fails.
+ */
+const TRUSTED = import.meta.env.VITE_TURN_TRUSTED === '1' || import.meta.env.VITE_TURN_TRUSTED === 'true'
+export const relayIsTrusted = () => TRUSTED && hasBuiltInRelay()
+
 function parseStatic(json: string | undefined): TurnServerConfig[] {
   if (!json) return []
   try {

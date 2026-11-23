@@ -35,6 +35,8 @@ src/
 
 **Rooms.** Every user listens in `inbox:<id>`, where people with your ID drop friend requests. Each friendship gets its own `pair:<hash(a,b)>` room, and that is where syncing happens. Rooms are password-protected with IDs only the participants know. Every peer must sign a challenge to prove it owns its ID before any data is exchanged.
 
+**Reaching friends.** In order: a direct WebRTC connection; if that's impossible (strict NATs), a *mutual friend* connected to both forwards end-to-end encrypted frames (X25519 + AES-GCM sessions signed by both identities); otherwise a TURN relay. A quick NAT probe at startup detects networks where direct can't work and offers the relay right away instead of waiting for a failure.
+
 **Sync.** On connect, friends swap manifests (`id`, `ts`), pull the records they're missing, and verify every signature. Media is fetched lazily by SHA-256 hash and checked on arrival. New records are pushed to online friends immediately.
 
 **Visibility.** A record belongs to the author of the post it hangs off. A friend may receive it if they are that author, or appear on the author's latest signed friend list.
@@ -55,5 +57,7 @@ Font: JetBrains Mono Nerd Font (SIL Open Font License, see `src/assets/fonts/OFL
 ## Relay (TURN)
 
 Some networks (mobile data, hotspots, strict NATs) block direct WebRTC connections. The app then falls back to a TURN relay *for that connection only*. The relay forwards end-to-end encrypted traffic, so it can't read content, but it does see IP addresses and traffic volume. Users can choose *only when needed* (default), *always* (hides your IP from friends), or *never* in Settings → Network, which also has a connection diagnostics panel.
+
+The cheapest setup is your own relay on Oracle Cloud's free tier, see [`deploy/turn/README.md`](deploy/turn/README.md). Set `TURN_TRUSTED=1` for your own relay: it's then offered on every connection (browsers still prefer direct), which makes connections on strict networks instant.
 
 Configure the built-in relay with a repository secret (Settings → Secrets and variables → Actions): either `TURN_ICE`, a JSON array of ICE servers with static credentials, or `TURN_ENDPOINT`, a URL returning ICE servers, e.g. Metered's `https://<app>.metered.live/api/v1/turn/credentials?apiKey=<key>`, or anything returning `{ "iceServers": [...] }`. For local development put `VITE_TURN_ICE=...` or `VITE_TURN_ENDPOINT=...` in `.env.local`.

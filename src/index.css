@@ -1,0 +1,95 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: "JetBrainsMono Nerd Font Mono";
+  src: local("JetBrainsMono Nerd Font Mono Regular"), local("JetBrainsMonoNFM-Regular"), url("./assets/fonts/JetBrainsMonoNerdFontMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrainsMono Nerd Font Mono";
+  src: local("JetBrainsMono Nerd Font Mono Medium"), local("JetBrainsMonoNFM-Medium"), url("./assets/fonts/JetBrainsMonoNerdFontMono-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrainsMono Nerd Font Mono";
+  src: local("JetBrainsMono Nerd Font Mono SemiBold"), local("JetBrainsMonoNFM-SemiBold"), url("./assets/fonts/JetBrainsMonoNerdFontMono-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrainsMono Nerd Font Mono";
+  src: local("JetBrainsMono Nerd Font Mono Bold"), local("JetBrainsMonoNFM-Bold"), url("./assets/fonts/JetBrainsMonoNerdFontMono-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #ffffff;
+  --fg: #0f0f12;
+  --muted: #6b6b76;
+  --line: #e6e6ea;
+  --elev: #f4f4f6;
+  --accent: #4f46e5;
+  --accent-fg: #ffffff;
+  --danger: #e11d48;
+  color-scheme: light;
+}
+.dark {
+  --bg: #0b0b0f;
+  --fg: #f3f3f6;
+  --muted: #9a9aa6;
+  --line: #26262d;
+  --elev: #17171c;
+  --accent: #818cf8;
+  --accent-fg: #0b0b0f;
+  --danger: #fb7185;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-elev: var(--elev);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-danger: var(--danger);
+  --font-sans: "JetBrainsMono Nerd Font Mono", ui-monospace, monospace;
+  --font-mono: "JetBrainsMono Nerd Font Mono", ui-monospace, monospace;
+  --font-brand: "JetBrainsMono Nerd Font Mono", ui-monospace, monospace;
+}
+
+html, body, #root { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* brand ring for unseen stories — our own palette, not anyone else's */
+.story-ring { background: conic-gradient(from 210deg, #10b981, #06b6d4, #6366f1, #a855f7, #10b981); }
+.brand-text {
+  background: linear-gradient(90deg, #10b981, #6366f1);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
+
+@keyframes pop { 0% { transform: scale(0); opacity: 0 } 15% { transform: scale(1.2); opacity: .95 } 30% { transform: scale(1) } 80% { opacity: .95 } 100% { transform: scale(1); opacity: 0 } }
+.animate-pop { animation: pop 900ms ease-out forwards; }
+@keyframes likebump { 0% { transform: scale(1) } 40% { transform: scale(1.25) } 100% { transform: scale(1) } }
+.animate-like { animation: likebump 300ms ease-out; }
+@keyframes fill { from { width: 0% } to { width: 100% } }
